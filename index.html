@@ -180,6 +180,38 @@
       color: var(--ink);
     }
 
+    .radio-strip {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .radio-strip label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 38px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .radio-strip label:has(input:checked) {
+      border-color: var(--accent);
+      background: #e8f5f3;
+      color: var(--accent-dark);
+    }
+
+    .radio-strip input {
+      margin: 0;
+    }
+
     .button-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -250,6 +282,122 @@
     .drop-active .paper {
       outline: 3px solid rgba(15, 118, 110, 0.28);
       outline-offset: 5px;
+    }
+
+    .jianpu-score {
+      padding: 8px 0 28px;
+      color: #111827;
+    }
+
+    .jianpu-title {
+      margin: 0 0 22px;
+      text-align: center;
+      font-size: clamp(26px, 7vw, 52px);
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    .jianpu-meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 22px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .jianpu-system {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 10px;
+      align-items: stretch;
+      margin: 0 0 18px;
+      break-inside: avoid;
+    }
+
+    .jianpu-row-label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+      border-right: 2px solid var(--line);
+    }
+
+    .jianpu-measures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+      border-top: 1px solid #111827;
+      border-left: 1px solid #111827;
+    }
+
+    .jianpu-measure {
+      min-height: 76px;
+      padding: 8px 10px 10px;
+      border-right: 1px solid #111827;
+      border-bottom: 1px solid #111827;
+      background: white;
+    }
+
+    .jianpu-measure-number {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .jianpu-notes {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 8px 12px;
+      min-height: 38px;
+    }
+
+    .jianpu-note {
+      position: relative;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      color: #111827;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .jianpu-note.rest {
+      color: #9ca3af;
+      font-weight: 650;
+    }
+
+    .jianpu-dots {
+      height: 8px;
+      font-size: 11px;
+      line-height: 8px;
+      letter-spacing: 1px;
+    }
+
+    .jianpu-duration {
+      margin-top: 4px;
+      width: 100%;
+      border-top: 2px solid currentColor;
+      opacity: 0;
+    }
+
+    .jianpu-note.short .jianpu-duration {
+      opacity: 1;
+    }
+
+    .jianpu-empty {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
     }
 
     @media (max-width: 860px) {
@@ -370,6 +518,13 @@
               <option value="64">E4 以上为高音谱号</option>
             </select>
           </label>
+          <label class="field">
+            显示方式
+            <div class="radio-strip">
+              <label><input type="radio" name="score-view" value="staff" checked> 五线谱</label>
+              <label><input type="radio" name="score-view" value="jianpu"> 简谱</label>
+            </div>
+          </label>
         </div>
 
         <div class="control-group">
@@ -455,6 +610,7 @@
     const keyInput = document.getElementById("keyInput");
     const modeInput = document.getElementById("modeInput");
     const tempoInput = document.getElementById("tempoInput");
+    const scoreViewInputs = [...document.querySelectorAll('input[name="score-view"]')];
 
     const DIVISIONS = 480;
     const DEGREE_INTERVALS = {
@@ -464,6 +620,9 @@
     let osmd = null;
     let lastMidiBuffer = null;
     let lastFileLabel = "";
+    let currentXmlText = "";
+    let currentFileLabel = "";
+    let currentScoreMeta = { title: "Untitled Score", beats: 4, beatType: 4, measureCount: 0 };
     let currentPlaybackNotes = [];
     let currentRenderNotes = [];
     let audioContext = null;
@@ -495,19 +654,37 @@
     }
 
     async function renderMusicXml(xmlText, label) {
-      const renderer = ensureRenderer();
-      await renderer.load(xmlText);
-      renderer.render();
+      currentXmlText = xmlText;
+      currentFileLabel = label || "已载入谱面";
       const scoreNotes = parseMusicXmlNotes(xmlText);
       currentPlaybackNotes = scoreNotes.playbackNotes;
       currentRenderNotes = scoreNotes.renderNotes;
-      startScoreObserver();
-      annotateScoreDegrees();
+      currentScoreMeta = scoreNotes.meta;
       printButton.disabled = false;
       playButton.disabled = currentPlaybackNotes.length === 0;
       stopButton.disabled = true;
-      fileName.textContent = label || "已载入谱面";
-      setStatus("谱面已生成。可播放、查看音符内级数，或点击“导出 PDF”保存。");
+      fileName.textContent = currentFileLabel;
+      await renderSelectedScoreView();
+    }
+
+    async function renderSelectedScoreView() {
+      if (!currentXmlText) return;
+      stopScoreObserver();
+      if (selectedScoreView() === "jianpu") {
+        osmd = null;
+        scoreEl.innerHTML = buildJianpuHtml();
+        setStatus("已切换到简谱。简谱按当前调显示首调数字。");
+        return;
+      }
+      const renderer = ensureRenderer();
+      await renderer.load(currentXmlText);
+      renderer.render();
+      scoreEl.querySelectorAll(".degree-label").forEach((node) => node.remove());
+      setStatus("已切换到五线谱。可播放或点击“导出 PDF”保存。");
+    }
+
+    function selectedScoreView() {
+      return scoreViewInputs.find((input) => input.checked)?.value || "staff";
     }
 
     async function handleFile(file) {
@@ -877,16 +1054,22 @@
 
     function parseMusicXmlNotes(xmlText) {
       const doc = new DOMParser().parseFromString(xmlText, "application/xml");
-      if (doc.querySelector("parsererror")) return { playbackNotes: [], renderNotes: [] };
+      if (doc.querySelector("parsererror")) return { playbackNotes: [], renderNotes: [], meta: currentScoreMeta };
       const firstPart = doc.querySelector("part");
-      if (!firstPart) return { playbackNotes: [], renderNotes: [] };
+      if (!firstPart) return { playbackNotes: [], renderNotes: [], meta: currentScoreMeta };
       const notes = [];
       let divisions = DIVISIONS;
       let measureBase = 0;
       let beats = 4;
       let beatType = 4;
+      let measureCount = 0;
+      const title = doc.querySelector("work-title")?.textContent?.trim()
+        || doc.querySelector("movement-title")?.textContent?.trim()
+        || titleInput.value.trim()
+        || "Untitled Score";
 
-      firstPart.querySelectorAll(":scope > measure").forEach((measure) => {
+      firstPart.querySelectorAll(":scope > measure").forEach((measure, measureIndex) => {
+        measureCount = Math.max(measureCount, measureIndex + 1);
         const attr = measure.querySelector(":scope > attributes");
         if (attr) {
           const divisionText = attr.querySelector("divisions")?.textContent;
@@ -918,6 +1101,8 @@
             notes.push({
               pitch,
               staff: Number(child.querySelector(":scope > staff")?.textContent) || (pitch >= 60 ? 1 : 2),
+              measureNumber: measureIndex + 1,
+              beatInMeasure: start / divisions,
               startQuarter: (measureBase + start) / divisions,
               durationQuarter: Math.max(0.0625, duration / divisions)
             });
@@ -934,7 +1119,11 @@
       const playbackNotes = renderNotes
         .map((note) => ({ ...note }))
         .sort((a, b) => a.startQuarter - b.startQuarter || a.pitch - b.pitch);
-      return { playbackNotes, renderNotes };
+      return {
+        playbackNotes,
+        renderNotes,
+        meta: { title, beats, beatType, measureCount }
+      };
     }
 
     function readDuration(node, fallbackDivisions) {
@@ -958,6 +1147,80 @@
       const exactIndex = intervals.indexOf(relative);
       if (exactIndex >= 0) return String(exactIndex + 1);
       return "";
+    }
+
+    function buildJianpuHtml() {
+      const measureCount = Math.max(
+        currentScoreMeta.measureCount || 0,
+        ...currentRenderNotes.map((note) => note.measureNumber || 1)
+      );
+      const chunkSize = 4;
+      const chunks = [];
+      for (let start = 1; start <= measureCount; start += chunkSize) {
+        chunks.push([start, Math.min(measureCount, start + chunkSize - 1)]);
+      }
+
+      const keyName = keyInput.options[keyInput.selectedIndex]?.textContent?.replace(/\s*\(.*/, "") || "C";
+      let html = '<div class="jianpu-score">';
+      html += `<h2 class="jianpu-title">${escapeHtml(currentScoreMeta.title || titleInput.value || "Untitled Score")}</h2>`;
+      html += `<div class="jianpu-meta"><span>${escapeHtml(keyName)} 调首调</span><span>${currentScoreMeta.beats || 4}/${currentScoreMeta.beatType || 4}</span></div>`;
+
+      chunks.forEach(([start, end]) => {
+        html += renderJianpuRow("高", 1, start, end);
+        html += renderJianpuRow("低", 2, start, end);
+      });
+
+      html += "</div>";
+      return html;
+    }
+
+    function renderJianpuRow(label, staff, startMeasure, endMeasure) {
+      let html = '<div class="jianpu-system">';
+      html += `<div class="jianpu-row-label">${label}</div>`;
+      html += '<div class="jianpu-measures">';
+      for (let measure = startMeasure; measure <= endMeasure; measure += 1) {
+        const notes = currentRenderNotes
+          .filter((note) => (note.staff || (note.pitch >= 60 ? 1 : 2)) === staff && note.measureNumber === measure)
+          .sort((a, b) => a.beatInMeasure - b.beatInMeasure || a.pitch - b.pitch);
+        html += '<div class="jianpu-measure">';
+        html += `<div class="jianpu-measure-number">${measure}</div>`;
+        html += '<div class="jianpu-notes">';
+        if (!notes.length) {
+          html += '<span class="jianpu-empty">-</span>';
+        } else {
+          notes.forEach((note) => {
+            html += renderJianpuNote(note);
+          });
+        }
+        html += '</div></div>';
+      }
+      html += '</div></div>';
+      return html;
+    }
+
+    function renderJianpuNote(note) {
+      const label = degreeLabelForPitch(note.pitch);
+      if (!label) return '<span class="jianpu-note rest"><span class="jianpu-dots"></span><span>·</span><span class="jianpu-duration"></span></span>';
+      const octave = Math.floor(note.pitch / 12) - 1;
+      const upperDots = octave >= 5 ? "•".repeat(Math.min(3, octave - 4)) : "";
+      const lowerDots = octave <= 3 ? "•".repeat(Math.min(3, 4 - octave)) : "";
+      const shortClass = note.durationQuarter < 1 ? " short" : "";
+      return [
+        `<span class="jianpu-note${shortClass}">`,
+        `<span class="jianpu-dots">${upperDots}</span>`,
+        `<span>${escapeHtml(label)}</span>`,
+        `<span class="jianpu-dots">${lowerDots}</span>`,
+        '<span class="jianpu-duration"></span>',
+        '</span>'
+      ].join("");
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
     }
 
     function annotateScoreDegrees() {
@@ -1286,7 +1549,22 @@
     });
 
     [keyInput, modeInput].forEach((control) => {
-      control.addEventListener("change", annotateScoreDegrees);
+      control.addEventListener("change", () => {
+        if (selectedScoreView() === "jianpu" && currentXmlText) {
+          scoreEl.innerHTML = buildJianpuHtml();
+          return;
+        }
+        scoreEl.querySelectorAll(".degree-label").forEach((node) => node.remove());
+      });
+    });
+
+    scoreViewInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        renderSelectedScoreView().catch((error) => {
+          console.error(error);
+          setStatus(error.message || "切换显示方式失败。", true);
+        });
+      });
     });
 
     ["dragenter", "dragover"].forEach((eventName) => {
