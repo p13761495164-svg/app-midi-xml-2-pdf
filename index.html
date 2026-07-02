@@ -471,6 +471,8 @@
     let playbackTimers = [];
     let activeOscillators = [];
     let isPlaying = false;
+    let scoreObserver = null;
+    let degreeDrawTimer = 0;
 
     function setStatus(message, isError = false) {
       statusBox.textContent = message;
@@ -481,6 +483,7 @@
       if (!window.opensheetmusicdisplay) {
         throw new Error("谱面渲染库没有加载成功，请确认当前浏览器可以访问 jsDelivr。");
       }
+      stopScoreObserver();
       scoreEl.innerHTML = "";
       osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(scoreEl, {
         autoResize: true,
@@ -499,6 +502,7 @@
       const scoreNotes = parseMusicXmlNotes(xmlText);
       currentPlaybackNotes = scoreNotes.playbackNotes;
       currentRenderNotes = scoreNotes.renderNotes;
+      startScoreObserver();
       annotateScoreDegrees();
       printButton.disabled = false;
       playButton.disabled = currentPlaybackNotes.length === 0;
@@ -972,17 +976,24 @@
     }
 
     function annotateScoreDegrees() {
+      window.clearTimeout(degreeDrawTimer);
       requestAnimationFrame(drawDegreeLabels);
       window.setTimeout(drawDegreeLabels, 80);
       window.setTimeout(drawDegreeLabels, 260);
+      window.setTimeout(drawDegreeLabels, 700);
     }
 
     function drawDegreeLabels() {
       const svg = scoreEl.querySelector("svg");
       if (!svg || !currentRenderNotes.length) return;
-      svg.querySelectorAll(".degree-label").forEach((node) => node.remove());
       const heads = Array.from(svg.querySelectorAll(".vf-notehead"));
       const count = Math.min(heads.length, currentRenderNotes.length);
+      if (!count) return;
+      const existing = Array.from(svg.querySelectorAll(".degree-label"));
+      const nextLabels = currentRenderNotes.slice(0, count).map((note) => degreeLabelForPitch(note.pitch));
+      const alreadyCorrect = existing.length === count && existing.every((node, index) => node.textContent === nextLabels[index]);
+      if (alreadyCorrect) return;
+      existing.forEach((node) => node.remove());
       for (let i = 0; i < count; i += 1) {
         const box = safeBBox(heads[i]);
         if (!box || box.width < 2 || box.height < 2) continue;
@@ -991,9 +1002,35 @@
         label.setAttribute("x", String(box.x + box.width / 2));
         label.setAttribute("y", String(box.y + box.height / 2 + 0.2));
         label.setAttribute("font-size", String(Math.max(5, Math.min(8.2, box.height * 0.78))));
-        label.textContent = degreeLabelForPitch(currentRenderNotes[i].pitch);
+        label.textContent = nextLabels[i];
         svg.appendChild(label);
       }
+    }
+
+    function startScoreObserver() {
+      stopScoreObserver();
+      scoreObserver = new MutationObserver((mutations) => {
+        const shouldRedraw = mutations.some((mutation) => {
+          const changed = [...mutation.addedNodes, ...mutation.removedNodes];
+          return changed.some((node) => !isDegreeLabelNode(node));
+        });
+        if (!shouldRedraw) return;
+        window.clearTimeout(degreeDrawTimer);
+        degreeDrawTimer = window.setTimeout(drawDegreeLabels, 120);
+      });
+      scoreObserver.observe(scoreEl, { childList: true, subtree: true });
+    }
+
+    function stopScoreObserver() {
+      if (scoreObserver) {
+        scoreObserver.disconnect();
+        scoreObserver = null;
+      }
+      window.clearTimeout(degreeDrawTimer);
+    }
+
+    function isDegreeLabelNode(node) {
+      return node.nodeType === 1 && node.classList?.contains("degree-label");
     }
 
     function safeBBox(node) {
