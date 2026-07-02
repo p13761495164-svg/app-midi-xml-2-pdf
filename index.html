@@ -393,18 +393,18 @@
           <label class="field">
             调
             <select id="keyInput">
-              <option value="0">C</option>
-              <option value="7">G</option>
-              <option value="2">D</option>
-              <option value="9">A</option>
-              <option value="4">E</option>
-              <option value="11">B</option>
-              <option value="6">F# / Gb</option>
-              <option value="1">C# / Db</option>
-              <option value="8">Ab</option>
-              <option value="3">Eb</option>
-              <option value="10">Bb</option>
-              <option value="5">F</option>
+              <option value="0">C (C=1)</option>
+              <option value="7">G (G=1)</option>
+              <option value="2">D (D=1)</option>
+              <option value="9">A (A=1)</option>
+              <option value="4">E (E=1)</option>
+              <option value="11">B (B=1)</option>
+              <option value="6">F# / Gb (=1)</option>
+              <option value="1">C# / Db (=1)</option>
+              <option value="8">Ab (Ab=1)</option>
+              <option value="3">Eb (Eb=1)</option>
+              <option value="10">Bb (Bb=1)</option>
+              <option value="5">F (F=1)</option>
             </select>
           </label>
           <label class="field">
@@ -931,9 +931,7 @@
         measureBase += measureLength;
       });
 
-      const renderNotes = notes
-        .filter((note) => Number.isFinite(note.pitch))
-        .sort((a, b) => a.staff - b.staff || a.startQuarter - b.startQuarter || a.pitch - b.pitch);
+      const renderNotes = notes.filter((note) => Number.isFinite(note.pitch));
       const playbackNotes = renderNotes
         .map((note) => ({ ...note }))
         .sort((a, b) => a.startQuarter - b.startQuarter || a.pitch - b.pitch);
@@ -986,16 +984,16 @@
     function drawDegreeLabels() {
       const svg = scoreEl.querySelector("svg");
       if (!svg || !currentRenderNotes.length) return;
-      const heads = Array.from(svg.querySelectorAll(".vf-notehead"));
-      const count = Math.min(heads.length, currentRenderNotes.length);
-      if (!count) return;
+      const headRows = visualNoteheadRows(svg);
+      const orderedPairs = orderedVisibleNotePairs(headRows);
+      if (!orderedPairs.length) return;
       const existing = Array.from(svg.querySelectorAll(".degree-label"));
-      const nextLabels = currentRenderNotes.slice(0, count).map((note) => degreeLabelForPitch(note.pitch));
-      const alreadyCorrect = existing.length === count && existing.every((node, index) => node.textContent === nextLabels[index]);
+      const nextLabels = orderedPairs.map((pair) => degreeLabelForPitch(pair.note.pitch));
+      const alreadyCorrect = existing.length === orderedPairs.length && existing.every((node, index) => node.textContent === nextLabels[index]);
       if (alreadyCorrect) return;
       existing.forEach((node) => node.remove());
-      for (let i = 0; i < count; i += 1) {
-        const box = safeBBox(heads[i]);
+      for (let i = 0; i < orderedPairs.length; i += 1) {
+        const box = orderedPairs[i].box;
         if (!box || box.width < 2 || box.height < 2) continue;
         const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
         label.setAttribute("class", "degree-label");
@@ -1005,6 +1003,62 @@
         label.textContent = nextLabels[i];
         svg.appendChild(label);
       }
+    }
+
+    function visualNoteheadRows(svg) {
+      const heads = Array.from(svg.querySelectorAll(".vf-notehead"))
+        .map((head) => ({ head, box: safeBBox(head) }))
+        .filter((item) => item.box && item.box.width >= 2 && item.box.height >= 2)
+        .map((item) => ({
+          ...item,
+          centerX: item.box.x + item.box.width / 2,
+          centerY: item.box.y + item.box.height / 2
+        }))
+        .sort((a, b) => a.centerY - b.centerY || a.centerX - b.centerX);
+
+      const rows = [];
+      heads.forEach((item) => {
+        let row = rows.find((candidate) => Math.abs(candidate.centerY - item.centerY) < 48);
+        if (!row) {
+          row = { centerY: item.centerY, heads: [] };
+          rows.push(row);
+        }
+        row.heads.push(item);
+        row.centerY = row.heads.reduce((sum, head) => sum + head.centerY, 0) / row.heads.length;
+      });
+
+      return rows
+        .sort((a, b) => a.centerY - b.centerY)
+        .map((row) => ({
+          ...row,
+          heads: row.heads.sort((a, b) => a.centerX - b.centerX || b.centerY - a.centerY)
+        }));
+    }
+
+    function orderedVisibleNotePairs(rows) {
+      const notesByStaff = new Map();
+      currentRenderNotes.forEach((note) => {
+        const staff = note.staff || (note.pitch >= 60 ? 1 : 2);
+        if (!notesByStaff.has(staff)) notesByStaff.set(staff, []);
+        notesByStaff.get(staff).push(note);
+      });
+      notesByStaff.forEach((notes) => {
+        notes.sort((a, b) => a.startQuarter - b.startQuarter || a.pitch - b.pitch);
+      });
+
+      const pairs = [];
+      const offsets = new Map([[1, 0], [2, 0]]);
+      rows.forEach((row, rowIndex) => {
+        const staff = (rowIndex % 2) + 1;
+        const notes = notesByStaff.get(staff) || [];
+        const offset = offsets.get(staff) || 0;
+        row.heads.forEach((head, headIndex) => {
+          const note = notes[offset + headIndex];
+          if (note) pairs.push({ head: head.head, box: head.box, note });
+        });
+        offsets.set(staff, offset + row.heads.length);
+      });
+      return pairs;
     }
 
     function startScoreObserver() {
