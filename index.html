@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MIDI / MusicXML 五线谱 PDF</title>
+  <style>
+    :root {
+      --bg: #f6f7f8;
+      --ink: #1f2328;
+      --muted: #6b7280;
+      --line: #d7dce2;
+      --panel: #ffffff;
+      --accent: #0f766e;
+      --accent-dark: #0b5f59;
+      --danger: #b42318;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(10px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      min-width: 210px;
+      margin-right: auto;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+
+    .file-name {
+      color: var(--muted);
+      font-size: 13px;
+      max-width: 34vw;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .upload {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .upload input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    button {
+      min-height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 8px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: white;
+    }
+
+    button.primary:hover {
+      background: var(--accent-dark);
+    }
+
+    button:disabled {
+      opacity: 0.48;
+      cursor: not-allowed;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      min-height: 0;
+    }
+
+    .side {
+      border-right: 1px solid var(--line);
+      background: #fbfbfc;
+      padding: 18px;
+      overflow: auto;
+    }
+
+    .control-group {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .control-title {
+      margin: 0;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    label.field {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 650;
+    }
+
+    select,
+    input[type="number"],
+    input[type="text"] {
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+      font-size: 14px;
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .status {
+      min-height: 38px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .status.error {
+      border-color: #f2b8b5;
+      color: var(--danger);
+      background: #fff7f6;
+    }
+
+    .score-wrap {
+      min-width: 0;
+      overflow: auto;
+      padding: 28px;
+    }
+
+    .paper {
+      width: min(1120px, 100%);
+      min-height: calc(100vh - 104px);
+      margin: 0 auto;
+      padding: 28px 30px;
+      background: white;
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 46px rgba(31, 35, 40, 0.08);
+    }
+
+    #score {
+      min-height: 480px;
+    }
+
+    .empty {
+      min-height: 480px;
+      display: grid;
+      place-items: center;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+      padding: 30px;
+      line-height: 1.7;
+    }
+
+    .drop-active .paper {
+      outline: 3px solid rgba(15, 118, 110, 0.28);
+      outline-offset: 5px;
+    }
+
+    @media (max-width: 860px) {
+      .toolbar {
+        padding: 10px;
+      }
+
+      .brand {
+        width: 100%;
+      }
+
+      .file-name {
+        max-width: 48vw;
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .side {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        padding: 12px;
+      }
+
+      .control-group {
+        margin-bottom: 0;
+      }
+
+      .score-wrap {
+        padding: 12px;
+      }
+
+      .paper {
+        padding: 16px 12px;
+        min-height: 60vh;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .side {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar > * {
+        flex: 1 1 auto;
+      }
+
+      .brand {
+        flex-basis: 100%;
+      }
+    }
+
+    @media print {
+      body {
+        background: white;
+      }
+
+      .toolbar,
+      .side {
+        display: none !important;
+      }
+
+      .app-shell,
+      .layout {
+        display: block;
+      }
+
+      .score-wrap {
+        padding: 0;
+        overflow: visible;
+      }
+
+      .paper {
+        width: 100%;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell" id="app">
+    <header class="toolbar">
+      <div class="brand">
+        <h1>MIDI / XML 五线谱</h1>
+        <span class="file-name" id="fileName">未选择文件</span>
+      </div>
+      <label class="upload">
+        上传文件
+        <input id="fileInput" type="file" accept=".mid,.midi,.xml,.musicxml,application/xml,text/xml,audio/midi">
+      </label>
+      <button id="demoButton" type="button">载入示例</button>
+      <button class="primary" id="printButton" type="button" disabled>导出 PDF</button>
+    </header>
+
+    <section class="layout">
+      <aside class="side">
+        <div class="control-group">
+          <p class="control-title">谱面</p>
+          <label class="field">
+            标题
+            <input id="titleInput" type="text" value="Untitled Score">
+          </label>
+          <label class="field">
+            拆分音高
+            <select id="splitInput">
+              <option value="60">C4 以上为高音谱号</option>
+              <option value="57">A3 以上为高音谱号</option>
+              <option value="64">E4 以上为高音谱号</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="control-group">
+          <p class="control-title">MIDI 转换</p>
+          <label class="field">
+            每小节拍数
+            <input id="beatsInput" type="number" min="2" max="12" value="4">
+          </label>
+          <label class="field">
+            拍号单位
+            <input id="beatTypeInput" type="number" min="2" max="8" value="4">
+          </label>
+          <label class="check-row">
+            <input id="quantizeInput" type="checkbox" checked>
+            自动对齐到 16 分音符
+          </label>
+        </div>
+
+        <div class="control-group">
+          <p class="control-title">状态</p>
+          <div class="status" id="status">上传 .mid、.midi、.xml 或 .musicxml 文件。MIDI 会转换为高音谱号和低音谱号双谱表。</div>
+        </div>
+      </aside>
+
+      <section class="score-wrap" id="dropZone">
+        <div class="paper">
+          <div id="score">
+            <div class="empty">把 MIDI 或 MusicXML 文件拖到这里<br>或点击上方“上传文件”</div>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.7/build/opensheetmusicdisplay.min.js"></script>
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const fileName = document.getElementById("fileName");
+    const statusBox = document.getElementById("status");
+    const printButton = document.getElementById("printButton");
+    const demoButton = document.getElementById("demoButton");
+    const scoreEl = document.getElementById("score");
+    const dropZone = document.getElementById("dropZone");
+    const app = document.getElementById("app");
+    const titleInput = document.getElementById("titleInput");
+    const splitInput = document.getElementById("splitInput");
+    const beatsInput = document.getElementById("beatsInput");
+    const beatTypeInput = document.getElementById("beatTypeInput");
+    const quantizeInput = document.getElementById("quantizeInput");
+
+    const DIVISIONS = 480;
+    let osmd = null;
+    let lastMidiBuffer = null;
+    let lastFileLabel = "";
+
+    function setStatus(message, isError = false) {
+      statusBox.textContent = message;
+      statusBox.classList.toggle("error", isError);
+    }
+
+    function ensureRenderer() {
+      if (!window.opensheetmusicdisplay) {
+        throw new Error("谱面渲染库没有加载成功，请确认当前浏览器可以访问 jsDelivr。");
+      }
+      scoreEl.innerHTML = "";
+      osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(scoreEl, {
+        autoResize: true,
+        backend: "svg",
+        drawTitle: true,
+        drawComposer: false,
+        drawingParameters: "compacttight"
+      });
+      return osmd;
+    }
+
+    async function renderMusicXml(xmlText, label) {
+      const renderer = ensureRenderer();
+      await renderer.load(xmlText);
+      renderer.render();
+      printButton.disabled = false;
+      fileName.textContent = label || "已载入谱面";
+      setStatus("谱面已生成。点击“导出 PDF”后，在系统打印窗口选择保存为 PDF。");
+    }
+
+    async function handleFile(file) {
+      if (!file) return;
+      const lower = file.name.toLowerCase();
+      fileName.textContent = file.name;
+      titleInput.value = file.name.replace(/\.(mid|midi|xml|musicxml)$/i, "") || "Untitled Score";
+      setStatus("正在读取文件...");
+      try {
+        if (lower.endsWith(".mid") || lower.endsWith(".midi")) {
+          lastMidiBuffer = await file.arrayBuffer();
+          lastFileLabel = file.name;
+          await renderMidiBuffer(lastMidiBuffer, file.name);
+          return;
+        }
+        if (lower.endsWith(".xml") || lower.endsWith(".musicxml")) {
+          lastMidiBuffer = null;
+          const xml = await file.text();
+          await renderMusicXml(xml, file.name);
+          return;
+        }
+        throw new Error("不支持的文件格式。请上传 .mid、.midi、.xml 或 .musicxml。");
+      } catch (error) {
+        console.error(error);
+        printButton.disabled = true;
+        setStatus(error.message || "文件处理失败。", true);
+      }
+    }
+
+    async function renderMidiBuffer(buffer, label) {
+      setStatus("正在把 MIDI 转换成双谱表 MusicXML...");
+      const parsed = parseMidi(buffer);
+      const xml = midiToMusicXml(parsed, {
+        title: titleInput.value.trim() || "Untitled Score",
+        splitPitch: Number(splitInput.value),
+        beats: clampInt(beatsInput.value, 2, 12, 4),
+        beatType: clampInt(beatTypeInput.value, 2, 8, 4),
+        quantize: quantizeInput.checked
+      });
+      await renderMusicXml(xml, label);
+    }
+
+    function clampInt(value, min, max, fallback) {
+      const n = Number.parseInt(value, 10);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.max(min, Math.min(max, n));
+    }
+
+    function parseMidi(arrayBuffer) {
+      const bytes = new Uint8Array(arrayBuffer);
+      const view = new DataView(arrayBuffer);
+      let offset = 0;
+
+      function readText(length) {
+        const text = String.fromCharCode(...bytes.slice(offset, offset + length));
+        offset += length;
+        return text;
+      }
+
+      function readU16() {
+        const value = view.getUint16(offset);
+        offset += 2;
+        return value;
+      }
+
+      function readU32() {
+        const value = view.getUint32(offset);
+        offset += 4;
+        return value;
+      }
+
+      function readVar(end) {
+        let value = 0;
+        while (offset < end) {
+          const b = bytes[offset++];
+          value = (value << 7) | (b & 0x7f);
+          if ((b & 0x80) === 0) break;
+        }
+        return value;
+      }
+
+      if (readText(4) !== "MThd") {
+        throw new Error("这不是标准 MIDI 文件。");
+      }
+
+      const headerLength = readU32();
+      const headerStart = offset;
+      const format = readU16();
+      const trackCount = readU16();
+      const division = readU16();
+      offset = headerStart + headerLength;
+
+      if (division & 0x8000) {
+        throw new Error("暂不支持 SMPTE 时间格式 MIDI。");
+      }
+
+      const notes = [];
+      const tempos = [];
+      let timeSignature = { beats: 4, beatType: 4 };
+
+      for (let track = 0; track < trackCount; track += 1) {
+        if (readText(4) !== "MTrk") {
+          throw new Error("MIDI 轨道数据损坏。");
+        }
+        const trackEnd = offset + readU32();
+        const openNotes = new Map();
+        let tick = 0;
+        let runningStatus = 0;
+
+        while (offset < trackEnd) {
+          tick += readVar(trackEnd);
+          let status = bytes[offset++];
+
+          if (status < 0x80) {
+            offset -= 1;
+            status = runningStatus;
+          } else {
+            runningStatus = status;
+          }
+
+          if (status === 0xff) {
+            const metaType = bytes[offset++];
+            const length = readVar(trackEnd);
+            if (metaType === 0x51 && length === 3) {
+              tempos.push({
+                tick,
+                microseconds: (bytes[offset] << 16) | (bytes[offset + 1] << 8) | bytes[offset + 2]
+              });
+            } else if (metaType === 0x58 && length >= 2) {
+              timeSignature = {
+                beats: bytes[offset],
+                beatType: 2 ** bytes[offset + 1]
+              };
+            }
+            offset += length;
+            continue;
+          }
+
+          if (status === 0xf0 || status === 0xf7) {
+            offset += readVar(trackEnd);
+            continue;
+          }
+
+          const command = status & 0xf0;
+          const channel = status & 0x0f;
+          const data1 = bytes[offset++];
+          const hasTwoDataBytes = command !== 0xc0 && command !== 0xd0;
+          const data2 = hasTwoDataBytes ? bytes[offset++] : 0;
+
+          if (command === 0x90 && data2 > 0) {
+            const key = channel + ":" + data1;
+            const stack = openNotes.get(key) || [];
+            stack.push({ start: tick, velocity: data2, track, channel, pitch: data1 });
+            openNotes.set(key, stack);
+          } else if (command === 0x80 || (command === 0x90 && data2 === 0)) {
+            const key = channel + ":" + data1;
+            const stack = openNotes.get(key);
+            if (stack && stack.length) {
+              const note = stack.shift();
+              const duration = Math.max(1, tick - note.start);
+              notes.push({ ...note, duration });
+            }
+          }
+        }
+        offset = trackEnd;
+      }
+
+      if (!notes.length) {
+        throw new Error("没有在 MIDI 中找到可转换的音符。");
+      }
+
+      return {
+        format,
+        division,
+        notes,
+        tempos,
+        timeSignature
+      };
+    }
+
+    function midiToMusicXml(parsed, options) {
+      const ticksPerQuarter = parsed.division;
+      const scale = DIVISIONS / ticksPerQuarter;
+      const beats = options.beats || parsed.timeSignature.beats || 4;
+      const beatType = options.beatType || parsed.timeSignature.beatType || 4;
+      const measureTicks = DIVISIONS * beats * (4 / beatType);
+      const quantum = options.quantize ? DIVISIONS / 4 : 1;
+      const splitPitch = options.splitPitch;
+      const notes = parsed.notes
+        .map((note) => {
+          const rawStart = note.start * scale;
+          const rawDuration = note.duration * scale;
+          const start = quantize(rawStart, quantum);
+          const duration = Math.max(quantum, quantize(rawDuration, quantum));
+          return {
+            pitch: note.pitch,
+            start,
+            duration,
+            staff: note.pitch >= splitPitch ? 1 : 2
+          };
+        })
+        .filter((note) => note.duration > 0)
+        .sort((a, b) => a.start - b.start || a.pitch - b.pitch);
+
+      const maxTick = Math.max(...notes.map((note) => note.start + note.duration));
+      const measureCount = Math.max(1, Math.ceil(maxTick / measureTicks));
+      const segments = splitNotesIntoMeasures(notes, measureTicks);
+      const title = escapeXml(options.title || "Untitled Score");
+
+      let xml = "";
+      xml += '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n';
+      xml += '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">\n';
+      xml += '<score-partwise version="3.1">\n';
+      xml += `  <work><work-title>${title}</work-title></work>\n`;
+      xml += '  <identification><encoding><software>Browser MIDI XML Score</software></encoding></identification>\n';
+      xml += '  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>\n';
+      xml += '  <part id="P1">\n';
+
+      for (let measure = 0; measure < measureCount; measure += 1) {
+        const number = measure + 1;
+        const start = measure * measureTicks;
+        const end = start + measureTicks;
+        xml += `    <measure number="${number}">\n`;
+        if (measure === 0) {
+          xml += "      <attributes>\n";
+          xml += `        <divisions>${DIVISIONS}</divisions>\n`;
+          xml += `        <time><beats>${beats}</beats><beat-type>${beatType}</beat-type></time>\n`;
+          xml += '        <staves>2</staves>\n';
+          xml += '        <clef number="1"><sign>G</sign><line>2</line></clef>\n';
+          xml += '        <clef number="2"><sign>F</sign><line>4</line></clef>\n';
+          xml += "      </attributes>\n";
+        }
+        xml += emitStaffMeasure(segments.filter((item) => item.staff === 1), start, end, 1);
+        xml += `      <backup><duration>${Math.round(measureTicks)}</duration></backup>\n`;
+        xml += emitStaffMeasure(segments.filter((item) => item.staff === 2), start, end, 2);
+        xml += "    </measure>\n";
+      }
+
+      xml += "  </part>\n";
+      xml += "</score-partwise>\n";
+      return xml;
+    }
+
+    function splitNotesIntoMeasures(notes, measureTicks) {
+      const segments = [];
+      for (const note of notes) {
+        let cursor = note.start;
+        const end = note.start + note.duration;
+        while (cursor < end) {
+          const measureEnd = (Math.floor(cursor / measureTicks) + 1) * measureTicks;
+          const segmentEnd = Math.min(end, measureEnd);
+          segments.push({
+            pitch: note.pitch,
+            staff: note.staff,
+            start: cursor,
+            duration: segmentEnd - cursor
+          });
+          cursor = segmentEnd;
+        }
+      }
+      return segments;
+    }
+
+    function emitStaffMeasure(allSegments, start, end, staff) {
+      const groups = new Map();
+      for (const note of allSegments) {
+        if (note.start >= start && note.start < end) {
+          const key = `${note.start}:${note.duration}`;
+          const group = groups.get(key) || { start: note.start, duration: note.duration, pitches: [] };
+          group.pitches.push(note.pitch);
+          groups.set(key, group);
+        }
+      }
+
+      const ordered = [...groups.values()].sort((a, b) => a.start - b.start || b.duration - a.duration);
+      let cursor = start;
+      let xml = "";
+
+      for (const group of ordered) {
+        if (group.start < cursor) continue;
+        if (group.start > cursor) {
+          xml += emitRest(Math.round(group.start - cursor), staff);
+        }
+        const duration = Math.min(group.duration, end - group.start);
+        const pitches = [...new Set(group.pitches)].sort((a, b) => a - b);
+        pitches.forEach((pitch, index) => {
+          xml += emitPitchedNote(pitch, Math.round(duration), staff, index > 0);
+        });
+        cursor = group.start + duration;
+      }
+
+      if (cursor < end) {
+        xml += emitRest(Math.round(end - cursor), staff);
+      }
+      return xml;
+    }
+
+    function emitRest(duration, staff) {
+      if (duration <= 0) return "";
+      return [
+        "      <note>",
+        "        <rest/>",
+        `        <duration>${duration}</duration>`,
+        `        <voice>${staff}</voice>`,
+        `        <type>${durationType(duration)}</type>`,
+        `        <staff>${staff}</staff>`,
+        "      </note>\n"
+      ].join("\n");
+    }
+
+    function emitPitchedNote(midiPitch, duration, staff, chord) {
+      const pitch = pitchParts(midiPitch);
+      return [
+        "      <note>",
+        chord ? "        <chord/>" : "",
+        "        <pitch>",
+        `          <step>${pitch.step}</step>`,
+        pitch.alter ? `          <alter>${pitch.alter}</alter>` : "",
+        `          <octave>${pitch.octave}</octave>`,
+        "        </pitch>",
+        `        <duration>${duration}</duration>`,
+        `        <voice>${staff}</voice>`,
+        `        <type>${durationType(duration)}</type>`,
+        `        <staff>${staff}</staff>`,
+        "      </note>\n"
+      ].filter(Boolean).join("\n");
+    }
+
+    function pitchParts(midiPitch) {
+      const names = [
+        ["C", 0], ["C", 1], ["D", 0], ["D", 1], ["E", 0], ["F", 0],
+        ["F", 1], ["G", 0], ["G", 1], ["A", 0], ["A", 1], ["B", 0]
+      ];
+      const [step, alter] = names[midiPitch % 12];
+      return {
+        step,
+        alter,
+        octave: Math.floor(midiPitch / 12) - 1
+      };
+    }
+
+    function durationType(duration) {
+      const rounded = Math.round(duration);
+      if (rounded >= DIVISIONS * 4) return "whole";
+      if (rounded >= DIVISIONS * 2) return "half";
+      if (rounded >= DIVISIONS) return "quarter";
+      if (rounded >= DIVISIONS / 2) return "eighth";
+      if (rounded >= DIVISIONS / 4) return "16th";
+      if (rounded >= DIVISIONS / 8) return "32nd";
+      return "64th";
+    }
+
+    function quantize(value, quantum) {
+      if (!quantum || quantum <= 1) return Math.round(value);
+      return Math.round(value / quantum) * quantum;
+    }
+
+    function escapeXml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function buildDemoMidiXml() {
+      const notes = [
+        { pitch: 60, start: 0, duration: 480 },
+        { pitch: 64, start: 480, duration: 480 },
+        { pitch: 67, start: 960, duration: 480 },
+        { pitch: 72, start: 1440, duration: 480 },
+        { pitch: 71, start: 1920, duration: 480 },
+        { pitch: 67, start: 2400, duration: 480 },
+        { pitch: 64, start: 2880, duration: 480 },
+        { pitch: 60, start: 3360, duration: 480 },
+        { pitch: 48, start: 0, duration: 960 },
+        { pitch: 43, start: 960, duration: 960 },
+        { pitch: 45, start: 1920, duration: 960 },
+        { pitch: 40, start: 2880, duration: 960 }
+      ];
+      return midiToMusicXml({
+        division: 480,
+        timeSignature: { beats: 4, beatType: 4 },
+        notes
+      }, {
+        title: "Piano Demo",
+        splitPitch: Number(splitInput.value),
+        beats: 4,
+        beatType: 4,
+        quantize: true
+      });
+    }
+
+    fileInput.addEventListener("change", () => handleFile(fileInput.files[0]));
+
+    printButton.addEventListener("click", () => {
+      window.print();
+    });
+
+    demoButton.addEventListener("click", async () => {
+      try {
+        await renderMusicXml(buildDemoMidiXml(), "示例谱面");
+      } catch (error) {
+        console.error(error);
+        setStatus(error.message || "示例载入失败。", true);
+      }
+    });
+
+    [splitInput, beatsInput, beatTypeInput, quantizeInput, titleInput].forEach((control) => {
+      control.addEventListener("change", () => {
+        if (lastMidiBuffer) {
+          renderMidiBuffer(lastMidiBuffer, lastFileLabel).catch((error) => {
+            console.error(error);
+            setStatus(error.message || "重新生成谱面失败。", true);
+          });
+        }
+      });
+    });
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        app.classList.add("drop-active");
+      });
+    });
+
+    ["dragleave", "drop"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        app.classList.remove("drop-active");
+      });
+    });
+
+    dropZone.addEventListener("drop", (event) => {
+      const file = event.dataTransfer.files[0];
+      handleFile(file);
+    });
+  </script>
+</body>
+</html>
