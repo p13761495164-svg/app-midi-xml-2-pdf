@@ -915,8 +915,10 @@
           const start = isChord ? lastStart : cursor;
           const pitchNode = child.querySelector(":scope > pitch");
           if (pitchNode) {
+            const pitch = xmlPitchToMidi(pitchNode);
             notes.push({
-              pitch: xmlPitchToMidi(pitchNode),
+              pitch,
+              staff: Number(child.querySelector(":scope > staff")?.textContent) || (pitch >= 60 ? 1 : 2),
               startQuarter: (measureBase + start) / divisions,
               durationQuarter: Math.max(0.0625, duration / divisions)
             });
@@ -929,7 +931,9 @@
         measureBase += measureLength;
       });
 
-      const renderNotes = notes.filter((note) => Number.isFinite(note.pitch));
+      const renderNotes = notes
+        .filter((note) => Number.isFinite(note.pitch))
+        .sort((a, b) => a.staff - b.staff || a.startQuarter - b.startQuarter || a.pitch - b.pitch);
       const playbackNotes = renderNotes
         .map((note) => ({ ...note }))
         .sort((a, b) => a.startQuarter - b.startQuarter || a.pitch - b.pitch);
@@ -956,23 +960,19 @@
       const relative = (pitchClass - tonic + 12) % 12;
       const exactIndex = intervals.indexOf(relative);
       if (exactIndex >= 0) return String(exactIndex + 1);
-      let nearest = 0;
-      let accidental = "";
       for (let i = 0; i < intervals.length; i += 1) {
-        const raised = (intervals[i] + 1) % 12;
         const lowered = (intervals[i] + 11) % 12;
-        if (relative === raised) {
-          nearest = i + 1;
-          accidental = "#";
-          break;
-        }
         if (relative === lowered) {
-          nearest = i + 1;
-          accidental = "b";
-          break;
+          return `b${i + 1}`;
         }
       }
-      return `${accidental}${nearest || "?"}`;
+      for (let i = 0; i < intervals.length; i += 1) {
+        const raised = (intervals[i] + 1) % 12;
+        if (relative === raised) {
+          return `#${i + 1}`;
+        }
+      }
+      return "?";
     }
 
     function annotateScoreDegrees() {
