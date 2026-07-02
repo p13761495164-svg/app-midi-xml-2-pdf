@@ -180,6 +180,24 @@
       color: var(--ink);
     }
 
+    .button-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .degree-label {
+      fill: #ffffff;
+      font-family: Arial, Helvetica, sans-serif;
+      font-weight: 800;
+      text-anchor: middle;
+      dominant-baseline: central;
+      pointer-events: none;
+      paint-order: stroke;
+      stroke: rgba(0, 0, 0, 0.18);
+      stroke-width: 0.65px;
+    }
+
     .status {
       min-height: 38px;
       padding: 10px 12px;
@@ -331,6 +349,8 @@
         <input id="fileInput" type="file" accept=".mid,.midi,.xml,.musicxml,application/xml,text/xml,audio/midi">
       </label>
       <button id="demoButton" type="button">载入示例</button>
+      <button id="playButton" type="button" disabled>播放</button>
+      <button id="stopButton" type="button" disabled>停止</button>
       <button class="primary" id="printButton" type="button" disabled>导出 PDF</button>
     </header>
 
@@ -369,6 +389,38 @@
         </div>
 
         <div class="control-group">
+          <p class="control-title">播放与级数</p>
+          <label class="field">
+            调
+            <select id="keyInput">
+              <option value="0">C</option>
+              <option value="7">G</option>
+              <option value="2">D</option>
+              <option value="9">A</option>
+              <option value="4">E</option>
+              <option value="11">B</option>
+              <option value="6">F# / Gb</option>
+              <option value="1">C# / Db</option>
+              <option value="8">Ab</option>
+              <option value="3">Eb</option>
+              <option value="10">Bb</option>
+              <option value="5">F</option>
+            </select>
+          </label>
+          <label class="field">
+            调式
+            <select id="modeInput">
+              <option value="major">大调</option>
+              <option value="minor">小调</option>
+            </select>
+          </label>
+          <label class="field">
+            速度 BPM
+            <input id="tempoInput" type="number" min="40" max="220" value="96">
+          </label>
+        </div>
+
+        <div class="control-group">
           <p class="control-title">状态</p>
           <div class="status" id="status">上传 .mid、.midi、.xml 或 .musicxml 文件。MIDI 会转换为高音谱号和低音谱号双谱表。</div>
         </div>
@@ -391,6 +443,8 @@
     const statusBox = document.getElementById("status");
     const printButton = document.getElementById("printButton");
     const demoButton = document.getElementById("demoButton");
+    const playButton = document.getElementById("playButton");
+    const stopButton = document.getElementById("stopButton");
     const scoreEl = document.getElementById("score");
     const dropZone = document.getElementById("dropZone");
     const app = document.getElementById("app");
@@ -399,11 +453,24 @@
     const beatsInput = document.getElementById("beatsInput");
     const beatTypeInput = document.getElementById("beatTypeInput");
     const quantizeInput = document.getElementById("quantizeInput");
+    const keyInput = document.getElementById("keyInput");
+    const modeInput = document.getElementById("modeInput");
+    const tempoInput = document.getElementById("tempoInput");
 
     const DIVISIONS = 480;
+    const DEGREE_INTERVALS = {
+      major: [0, 2, 4, 5, 7, 9, 11],
+      minor: [0, 2, 3, 5, 7, 8, 10]
+    };
     let osmd = null;
     let lastMidiBuffer = null;
     let lastFileLabel = "";
+    let currentPlaybackNotes = [];
+    let currentRenderNotes = [];
+    let audioContext = null;
+    let playbackTimers = [];
+    let activeOscillators = [];
+    let isPlaying = false;
 
     function setStatus(message, isError = false) {
       statusBox.textContent = message;
@@ -429,9 +496,15 @@
       const renderer = ensureRenderer();
       await renderer.load(xmlText);
       renderer.render();
+      const scoreNotes = parseMusicXmlNotes(xmlText);
+      currentPlaybackNotes = scoreNotes.playbackNotes;
+      currentRenderNotes = scoreNotes.renderNotes;
+      annotateScoreDegrees();
       printButton.disabled = false;
+      playButton.disabled = currentPlaybackNotes.length === 0;
+      stopButton.disabled = true;
       fileName.textContent = label || "已载入谱面";
-      setStatus("谱面已生成。点击“导出 PDF”后，在系统打印窗口选择保存为 PDF。");
+      setStatus("谱面已生成。可播放、查看音符内级数，或点击“导出 PDF”保存。");
     }
 
     async function handleFile(file) {
@@ -457,6 +530,8 @@
       } catch (error) {
         console.error(error);
         printButton.disabled = true;
+        playButton.disabled = true;
+        stopPlayback();
         setStatus(error.message || "文件处理失败。", true);
       }
     }
@@ -797,6 +872,233 @@
         .replace(/"/g, "&quot;");
     }
 
+    function parseMusicXmlNotes(xmlText) {
+      const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+      if (doc.querySelector("parsererror")) return { playbackNotes: [], renderNotes: [] };
+      const firstPart = doc.querySelector("part");
+      if (!firstPart) return { playbackNotes: [], renderNotes: [] };
+      const notes = [];
+      let divisions = DIVISIONS;
+      let measureBase = 0;
+      let beats = 4;
+      let beatType = 4;
+
+      firstPart.querySelectorAll(":scope > measure").forEach((measure) => {
+        const attr = measure.querySelector(":scope > attributes");
+        if (attr) {
+          const divisionText = attr.querySelector("divisions")?.textContent;
+          if (divisionText) divisions = Number(divisionText) || divisions;
+          const beatText = attr.querySelector("time > beats")?.textContent;
+          const beatTypeText = attr.querySelector("time > beat-type")?.textContent;
+          if (beatText) beats = Number(beatText) || beats;
+          if (beatTypeText) beatType = Number(beatTypeText) || beatType;
+        }
+        const measureLength = divisions * beats * (4 / beatType);
+        let cursor = 0;
+        let lastStart = 0;
+        Array.from(measure.children).forEach((child) => {
+          if (child.tagName === "backup") {
+            cursor = Math.max(0, cursor - readDuration(child, divisions));
+            return;
+          }
+          if (child.tagName === "forward") {
+            cursor += readDuration(child, divisions);
+            return;
+          }
+          if (child.tagName !== "note") return;
+          const duration = readDuration(child, divisions);
+          const isChord = Boolean(child.querySelector(":scope > chord"));
+          const start = isChord ? lastStart : cursor;
+          const pitchNode = child.querySelector(":scope > pitch");
+          if (pitchNode) {
+            notes.push({
+              pitch: xmlPitchToMidi(pitchNode),
+              startQuarter: (measureBase + start) / divisions,
+              durationQuarter: Math.max(0.0625, duration / divisions)
+            });
+          }
+          if (!isChord) {
+            lastStart = cursor;
+            cursor += duration;
+          }
+        });
+        measureBase += measureLength;
+      });
+
+      const renderNotes = notes.filter((note) => Number.isFinite(note.pitch));
+      const playbackNotes = renderNotes
+        .map((note) => ({ ...note }))
+        .sort((a, b) => a.startQuarter - b.startQuarter || a.pitch - b.pitch);
+      return { playbackNotes, renderNotes };
+    }
+
+    function readDuration(node, fallbackDivisions) {
+      const durationText = node.querySelector(":scope > duration")?.textContent;
+      return Math.max(0, Number(durationText) || fallbackDivisions);
+    }
+
+    function xmlPitchToMidi(pitchNode) {
+      const step = pitchNode.querySelector("step")?.textContent || "C";
+      const alter = Number(pitchNode.querySelector("alter")?.textContent || 0);
+      const octave = Number(pitchNode.querySelector("octave")?.textContent || 4);
+      const stepBase = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[step] ?? 0;
+      return (octave + 1) * 12 + stepBase + alter;
+    }
+
+    function degreeLabelForPitch(midiPitch) {
+      const tonic = Number(keyInput.value);
+      const intervals = DEGREE_INTERVALS[modeInput.value] || DEGREE_INTERVALS.major;
+      const pitchClass = ((midiPitch % 12) + 12) % 12;
+      const relative = (pitchClass - tonic + 12) % 12;
+      const exactIndex = intervals.indexOf(relative);
+      if (exactIndex >= 0) return String(exactIndex + 1);
+      let nearest = 0;
+      let accidental = "";
+      for (let i = 0; i < intervals.length; i += 1) {
+        const raised = (intervals[i] + 1) % 12;
+        const lowered = (intervals[i] + 11) % 12;
+        if (relative === raised) {
+          nearest = i + 1;
+          accidental = "#";
+          break;
+        }
+        if (relative === lowered) {
+          nearest = i + 1;
+          accidental = "b";
+          break;
+        }
+      }
+      return `${accidental}${nearest || "?"}`;
+    }
+
+    function annotateScoreDegrees() {
+      requestAnimationFrame(drawDegreeLabels);
+      window.setTimeout(drawDegreeLabels, 80);
+      window.setTimeout(drawDegreeLabels, 260);
+    }
+
+    function drawDegreeLabels() {
+      const svg = scoreEl.querySelector("svg");
+      if (!svg || !currentRenderNotes.length) return;
+      svg.querySelectorAll(".degree-label").forEach((node) => node.remove());
+      const heads = Array.from(svg.querySelectorAll(".vf-notehead"));
+      const count = Math.min(heads.length, currentRenderNotes.length);
+      for (let i = 0; i < count; i += 1) {
+        const box = safeBBox(heads[i]);
+        if (!box || box.width < 2 || box.height < 2) continue;
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("class", "degree-label");
+        label.setAttribute("x", String(box.x + box.width / 2));
+        label.setAttribute("y", String(box.y + box.height / 2 + 0.2));
+        label.setAttribute("font-size", String(Math.max(5, Math.min(8.2, box.height * 0.78))));
+        label.textContent = degreeLabelForPitch(currentRenderNotes[i].pitch);
+        svg.appendChild(label);
+      }
+    }
+
+    function safeBBox(node) {
+      try {
+        if (typeof node.getBBox === "function") {
+          return node.getBBox();
+        }
+      } catch (error) {
+        // Fall back to path parsing below.
+      }
+      const path = node.querySelector("path");
+      const d = path?.getAttribute("d") || "";
+      const values = d.match(/-?\d+(?:\.\d+)?/g)?.map(Number) || [];
+      if (values.length < 4) return null;
+      const xs = [];
+      const ys = [];
+      for (let i = 0; i < values.length - 1; i += 2) {
+        xs.push(values[i]);
+        ys.push(values[i + 1]);
+      }
+      const x = Math.min(...xs);
+      const y = Math.min(...ys);
+      const width = Math.max(...xs) - x;
+      const height = Math.max(...ys) - y;
+      return { x, y, width, height };
+    }
+
+    function ensureAudioContext() {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioContext.state === "suspended") {
+        audioContext.resume();
+      }
+      return audioContext;
+    }
+
+    function playCurrentScore() {
+      if (!currentPlaybackNotes.length) return;
+      stopPlayback();
+      const ctx = ensureAudioContext();
+      const bpm = clampInt(tempoInput.value, 40, 220, 96);
+      const secondsPerQuarter = 60 / bpm;
+      const startAt = ctx.currentTime + 0.08;
+      isPlaying = true;
+      playButton.disabled = true;
+      stopButton.disabled = false;
+      setStatus(`正在播放，速度 ${bpm} BPM。`);
+
+      const lastEnd = Math.max(...currentPlaybackNotes.map((note) => note.startQuarter + note.durationQuarter));
+      currentPlaybackNotes.forEach((note) => {
+        const start = startAt + note.startQuarter * secondsPerQuarter;
+        const duration = Math.max(0.08, note.durationQuarter * secondsPerQuarter * 0.92);
+        scheduleTone(ctx, note.pitch, start, duration);
+      });
+      const endTimer = window.setTimeout(() => {
+        isPlaying = false;
+        playButton.disabled = false;
+        stopButton.disabled = true;
+        setStatus("播放结束。");
+      }, (lastEnd * secondsPerQuarter + 0.35) * 1000);
+      playbackTimers.push(endTimer);
+    }
+
+    function scheduleTone(ctx, midiPitch, start, duration) {
+      const frequency = 440 * 2 ** ((midiPitch - 69) / 12);
+      const gain = ctx.createGain();
+      const osc = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(frequency, start);
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(1600, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.18, start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.06, start + Math.max(0.04, duration * 0.62));
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + duration + 0.04);
+      activeOscillators.push(osc);
+      osc.onended = () => {
+        activeOscillators = activeOscillators.filter((item) => item !== osc);
+      };
+    }
+
+    function stopPlayback() {
+      playbackTimers.forEach((timer) => window.clearTimeout(timer));
+      playbackTimers = [];
+      activeOscillators.forEach((osc) => {
+        try {
+          osc.stop();
+        } catch (error) {
+          // Already stopped.
+        }
+      });
+      activeOscillators = [];
+      if (isPlaying) setStatus("播放已停止。");
+      isPlaying = false;
+      playButton.disabled = currentPlaybackNotes.length === 0;
+      stopButton.disabled = true;
+    }
+
     function buildDemoMidiXml() {
       const notes = [
         { pitch: 60, start: 0, duration: 480 },
@@ -831,6 +1133,9 @@
       window.print();
     });
 
+    playButton.addEventListener("click", playCurrentScore);
+    stopButton.addEventListener("click", stopPlayback);
+
     demoButton.addEventListener("click", async () => {
       try {
         await renderMusicXml(buildDemoMidiXml(), "示例谱面");
@@ -849,6 +1154,10 @@
           });
         }
       });
+    });
+
+    [keyInput, modeInput].forEach((control) => {
+      control.addEventListener("change", annotateScoreDegrees);
     });
 
     ["dragenter", "dragover"].forEach((eventName) => {
